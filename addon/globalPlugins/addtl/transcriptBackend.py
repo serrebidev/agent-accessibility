@@ -1,0 +1,410 @@
+# -*- coding: UTF-8 -*-
+# globalPlugins/addtl/transcriptBackend.py
+#
+# Shared message-navigation base for the Command Code and Freebuff backends.
+#
+# Both apps keep a linear transcript on disk that the add-on reads directly:
+# Command Code in ~/.commandcode/projects/<slug>/<thread>.jsonl, Freebuff in a
+# per-project desktop-v2.db. Everything that does not depend on where the data
+# lives — the stable message index, announcement, browse-cursor anchoring,
+# thread cycling, the picker and the diagnostic dump — lives here.
+#
+# Subclasses supply loadMessages() and loadThreads(). Neither app exposes a
+# deep link for opening a conversation, so activateThread() falls back to
+# activating the matching object in the app's accessibility tree.
+
+import os
+import time
+
+import api
+import gui
+import speech
+import textInfos
+import ui
+import wx
+from logHandler import log
+
+_MESSAGES_TTL = 2.0
+_THREADS_TTL = 30.0
+_TREE_WALK_DEPTH = 12
+_TREE_MATCH_LIMIT = 40
+
+
+class TranscriptBackend(object):
+
+	#: Shown in announcements and diagnostics ("Command Code", "Freebuff").
+	appLabel = "Agent"
+	#: What the app calls a conversation ("thread", "session").
+	threadNoun = "thread"
+	#: Prefix for the debug log written by NVDA+Alt+D.
+	logPrefix = "agentTranscript"
+
+	def __init__(self, plugin=None):
+		self._plugin = plugin
+		self._running = True
+		self._msgIndex = -1
+		self._messages = []
+		self._messagesId = ""
+		self._messagesTime = 0.0
+		self._threads = []
+		self._threadsTime = 0.0
+		self._threadIdx = -1
+		self._debugPath = os.path.join(
+			os.path.expanduser("~"), "AppData", "Roaming", "nvda",
+			"%s_debug.log" % self.logPrefix,
+		)
+
+	def terminate(self):
+		self._running = False
+
+	# ------------------------------------------------------------------
+	# Hooks for the app-specific subclasses
+	# ------------------------------------------------------------------
+
+	def loadMessages(self):
+		"""Return (messages, conversationId).
+
+		Each message is {'role': str, 'text': str, 'thinking': str}. The
+		conversation id is used to reset the index when the user switches
+		conversations in the app itself.
+		"""
+		raise NotImplementedError
+
+	def loadThreads(self):
+		"""Return [{'id', 'title', 'detail'}] newest first."""
+		return []
+
+	def activateThread(self, thread):
+		"""Switch the running app to `thread`. True if the app was told to."""
+		return self._activateByTitle(thread.get("title", ""))
+
+	# ------------------------------------------------------------------
+	# Diagnostics
+	# ------------------------------------------------------------------
+
+	def _dbg(self, *args):
+		try:
+			with open(self._debugPath, "a", encoding="utf-8") as handle:
+				handle.write(time.strftime("%H:%M:%S") + "  "
+					+ "  ".join(str(a) for a in args) + "\n")
+		except Exception:
+			pass
+
+	# ------------------------------------------------------------------
+	# Message cache
+	# ------------------------------------------------------------------
+
+	def _invalidateMessages(self):
+		self._messagesTime = 0.0
+		self._messagesId = ""
+		self._msgIndex = -1
+
+	def _getMessages(self, force_refresh=False):
+		now = time.monotonic()
+		stale = (now - self._messagesTime) >= _MESSAGES_TTL
+		if not force_refresh and self._messages and not stale:
+			return self._messages
+		try:
+			messages, conversation_id = self.loadMessages()
+		except Exception as e:
+			log.warning("%s: could not load messages: %s", self.appLabel, e)
+			self._dbg("loadMessages error:", e)
+			messages, conversation_id = [], ""
+		if messages or force_refresh or not self._messages:
+			self._messages = messages
+			self._messagesTime = now
+		if conversation_id and conversation_id != self._messagesId:
+			# The user switched conversations in the app; the old index
+			# points at nothing meaningful any more.
+			self._messagesId = conversation_id
+			self._msgIndex = -1
+			self._dbg("conversation changed:", conversation_id)
+		return self._messages
+
+	# ------------------------------------------------------------------
+	# Browse-cursor anchoring
+	# ------------------------------------------------------------------
+
+	def _getRawTreeInterceptor(self):
+		try:
+			focus = api.getFocusObject()
+		except Exception:
+			return None
+		if focus is None:
+			return None
+		return getattr(focus, "treeInterceptor", None)
+
+	def _anchorCursorToText(self, search_text):
+		if not search_text:
+			return
+		ti = self._getRawTreeInterceptor()
+		if ti is None:
+			return
+		needle = search_text[:60].strip()
+		if not needle:
+			return
+		try:
+			info = ti.makeTextInfo(textInfos.POSITION_FIRST)
+			if info.find(needle, caseSensitive=False):
+				info.collapse()
+				try:
+					ti.selection = info
+				except Exception:
+					pass
+		except Exception:
+			pass
+
+	def _announceAndAnchor(self, msg):
+		speech.cancelSpeech()
+		thinking = (msg.get("thinking") or "").strip()
+		if thinking:
+			ui.message("%s: %s\nThinking: %s" % (msg["role"], msg["text"], thinking))
+		else:
+			ui.message("%s: %s" % (msg["role"], msg["text"]))
+		self._anchorCursorToText(msg["text"])
+
+	# ------------------------------------------------------------------
+	# Message navigation
+	# ------------------------------------------------------------------
+
+	def nextMessage(self):
+		msgs = self._getMessages()
+		if not msgs:
+			ui.message("No messages found")
+			return
+		nxt = self._msgIndex + 1
+		if nxt >= len(msgs):
+			ui.message("No more messages")
+			return
+		self._msgIndex = nxt
+		self._announceAndAnchor(msgs[self._msgIndex])
+
+	def previousMessage(self):
+		msgs = self._getMessages()
+		if not msgs:
+			ui.message("No messages found")
+			return
+		nxt = self._msgIndex - 1
+		if nxt < 0:
+			ui.message("Already at first message")
+			return
+		self._msgIndex = nxt
+		self._announceAndAnchor(msgs[self._msgIndex])
+
+	def firstMessage(self):
+		msgs = self._getMessages(force_refresh=True)
+		if not msgs:
+			ui.message("No messages found")
+			return
+		self._msgIndex = 0
+		self._announceAndAnchor(msgs[0])
+
+	def lastMessage(self):
+		msgs = self._getMessages(force_refresh=True)
+		if not msgs:
+			ui.message("No messages found")
+			return
+		self._msgIndex = len(msgs) - 1
+		self._announceAndAnchor(msgs[-1])
+
+	def readCurrentMessage(self):
+		msgs = self._getMessages()
+		if not (0 <= self._msgIndex < len(msgs)):
+			ui.message("No message selected. Press NVDA+Alt+Down to start.")
+			return
+		msg = msgs[self._msgIndex]
+		speech.cancelSpeech()
+		ui.message("%s: %s" % (msg["role"], msg["text"]))
+
+	def readThinking(self):
+		msgs = self._getMessages()
+		if not (0 <= self._msgIndex < len(msgs)):
+			ui.message("No message selected. Press NVDA+Alt+Down to start.")
+			return
+		msg = msgs[self._msgIndex]
+		if msg["role"] != "Assistant":
+			ui.message("Current message is not from the assistant.")
+			return
+		thinking = (msg.get("thinking") or "").strip()
+		if thinking:
+			ui.message("Thinking: %s" % thinking)
+		else:
+			ui.message("No thinking available for this message.")
+
+	# ------------------------------------------------------------------
+	# Conversation switching
+	# ------------------------------------------------------------------
+
+	def _threadLabel(self, thread):
+		title = (thread.get("title") or "").strip() or "(untitled)"
+		detail = (thread.get("detail") or "").strip()
+		if detail and detail.lower() != title.lower():
+			return "%s  (%s)" % (title, detail)
+		return title
+
+	def _refreshThreads(self, force=False):
+		now = time.monotonic()
+		if not force and self._threads and (now - self._threadsTime) < _THREADS_TTL:
+			return
+		try:
+			self._threads = self.loadThreads() or []
+		except Exception as e:
+			log.warning("%s: could not list threads: %s", self.appLabel, e)
+			self._dbg("loadThreads error:", e)
+			self._threads = []
+		self._threadsTime = now
+		if self._threadIdx >= len(self._threads):
+			self._threadIdx = -1
+		self._dbg("thread cache: %d entries" % len(self._threads))
+
+	def _jumpToThread(self):
+		if not (0 <= self._threadIdx < len(self._threads)):
+			return
+		thread = self._threads[self._threadIdx]
+		label = self._threadLabel(thread)
+		if self.activateThread(thread):
+			self._invalidateMessages()
+			ui.message("[%d/%d] %s" % (self._threadIdx + 1, len(self._threads), label))
+		else:
+			ui.message("Could not switch to %s in %s" % (label, self.appLabel))
+
+	def nextSession(self):
+		self._refreshThreads()
+		if not self._threads:
+			ui.message("No %ss found in %s" % (self.threadNoun, self.appLabel))
+			return
+		self._threadIdx = (self._threadIdx + 1) % len(self._threads)
+		self._jumpToThread()
+
+	def previousSession(self):
+		self._refreshThreads()
+		if not self._threads:
+			ui.message("No %ss found in %s" % (self.threadNoun, self.appLabel))
+			return
+		if self._threadIdx <= 0:
+			self._threadIdx = len(self._threads) - 1
+		else:
+			self._threadIdx -= 1
+		self._jumpToThread()
+
+	def openSessionPicker(self):
+		self._refreshThreads(force=True)
+		if not self._threads:
+			ui.message("No %ss found in %s" % (self.threadNoun, self.appLabel))
+			return
+		labels = [self._threadLabel(thread) for thread in self._threads]
+
+		def _show():
+			gui.mainFrame.prePopup()
+			dlg = wx.SingleChoiceDialog(
+				gui.mainFrame,
+				"Select a %s to open" % self.threadNoun,
+				"%s %ss" % (self.appLabel, self.threadNoun.capitalize()),
+				labels,
+			)
+			result = dlg.ShowModal()
+			idx = dlg.GetSelection()
+			dlg.Destroy()
+			gui.mainFrame.postPopup()
+			if result == wx.ID_OK and 0 <= idx < len(self._threads):
+				self._threadIdx = idx
+				self._jumpToThread()
+
+		wx.CallAfter(_show)
+
+	def _collectTreeObjects(self, title):
+		"""Return accessible objects in the foreground window whose name is `title`.
+
+		Exact matches win; otherwise the first substring match is used. The
+		walk is capped in both depth and breadth because an Electron
+		renderer's tree can be very large.
+		"""
+		needle = (title or "").strip().lower()
+		if not needle:
+			return []
+		try:
+			root = api.getForegroundObject()
+		except Exception:
+			return []
+		if root is None:
+			return []
+		exact = []
+		partial = []
+		visited = [0]
+
+		def walk(obj, depth):
+			if depth > _TREE_WALK_DEPTH or visited[0] > _TREE_MATCH_LIMIT:
+				return
+			try:
+				children = list(obj.children)
+			except Exception:
+				return
+			for child in children:
+				if visited[0] > _TREE_MATCH_LIMIT:
+					return
+				visited[0] += 1
+				try:
+					name = (child.name or "").strip().lower()
+				except Exception:
+					name = ""
+				if name == needle:
+					exact.append(child)
+				elif name and needle in name and len(partial) < 5:
+					partial.append(child)
+				walk(child, depth + 1)
+
+		try:
+			walk(root, 0)
+		except Exception:
+			pass
+		return exact or partial
+
+	def _activateByTitle(self, title):
+		"""Activate the app's own control for `title`.
+
+		Command Code and Freebuff register no deep link that opens a
+		conversation, so the only way the add-on can switch is to trigger
+		the matching list item in the renderer.
+		"""
+		matches = self._collectTreeObjects(title)
+		for obj in matches:
+			try:
+				obj.doAction()
+				self._dbg("activate: doAction on %r" % title)
+				return True
+			except Exception as e:
+				self._dbg("activate: doAction failed on %r: %s" % (title, e))
+		for obj in matches:
+			try:
+				obj.setFocus()
+				self._dbg("activate: setFocus on %r" % title)
+				return True
+			except Exception:
+				continue
+		return False
+
+	# ------------------------------------------------------------------
+	# Diagnostic dump
+	# ------------------------------------------------------------------
+
+	def dumpDebug(self):
+		self._dbg("=== DUMP %s ===" % self.appLabel)
+		try:
+			fg = api.getForegroundObject()
+			self._dbg("foreground=%r appModule=%r" % (
+				getattr(fg, "name", ""),
+				getattr(getattr(fg, "appModule", None), "appName", "")))
+		except Exception as e:
+			self._dbg("foreground error:", e)
+		msgs = self._getMessages(force_refresh=True)
+		self._dbg("messages: %d (index %d, conversation %s)" % (
+			len(msgs), self._msgIndex, self._messagesId or "unknown"))
+		for i, msg in enumerate(msgs[:12]):
+			has_thinking = "yes" if msg.get("thinking") else "no"
+			self._dbg("  [%d] %s (thinking=%s): %r" % (
+				i, msg["role"], has_thinking, msg["text"][:80]))
+		self._refreshThreads(force=True)
+		self._dbg("threads: %d" % len(self._threads))
+		for i, thread in enumerate(self._threads[:12]):
+			self._dbg("  {%d} %s" % (i, self._threadLabel(thread)))
+		ui.message("%s debug log written: %s" % (self.appLabel, self._debugPath))
