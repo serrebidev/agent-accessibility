@@ -26,11 +26,15 @@ from logHandler import log
 
 _MESSAGES_TTL = 2.0
 _THREADS_TTL = 30.0
-_TREE_WALK_DEPTH = 12
-# The thread list lives inside an Electron renderer, whose tree easily runs to
-# thousands of objects, and lists of that size are usually virtualized — so a
-# small budget silently finds only whatever happens to render early. Walk
-# generously, but under a wall-clock ceiling so a huge tree cannot hang NVDA.
+# An Electron renderer chains deeply — window, pane, group, document, list,
+# row is easily fifteen levels — so a shallow cap truncates the walk before it
+# ever reaches a thread row. Bound the walk by node count and elapsed time
+# instead, which is what actually shows up on a big window, and keep depth as
+# a backstop against a pathological cycle.
+_TREE_WALK_DEPTH = 25
+# Lists in these renderers are large and often virtualized, so a small budget
+# silently finds only whatever happens to render early. Walk generously, but
+# under a wall-clock ceiling so a huge tree cannot hang NVDA.
 _TREE_MAX_NODES = 6000
 _TREE_WALK_BUDGET_S = 2.5
 _TREE_PARTIAL_LIMIT = 5
@@ -354,6 +358,8 @@ class TranscriptBackend(object):
 		partial = []
 		budget = [time.monotonic() + _TREE_WALK_BUDGET_S]
 		counter = [0, False]
+		deepest = [0]
+		depth_capped = [False]
 
 		def expired():
 			if counter[0] >= _TREE_MAX_NODES or time.monotonic() > budget[0]:
@@ -362,8 +368,13 @@ class TranscriptBackend(object):
 			return False
 
 		def walk(obj, depth):
-			if counter[1] or depth > _TREE_WALK_DEPTH:
+			if counter[1]:
 				return
+			if depth > _TREE_WALK_DEPTH:
+				depth_capped[0] = True
+				return
+			if depth > deepest[0]:
+				deepest[0] = depth
 			try:
 				children = list(obj.children)
 			except Exception:
@@ -387,9 +398,17 @@ class TranscriptBackend(object):
 			walk(root, 0)
 		except Exception as e:
 			self._dbg("lookup %r: walk error %s" % (title, e))
-		self._dbg("lookup %r: %d nodes, %d exact, %d partial%s" % (
-			title, counter[0], len(exact), len(partial),
-			" (capped)" if counter[1] else ""))
+		# The stop reason matters: a shallow result that was never capped means
+		# the object is not in the tree the reader can see, which no budget can
+		# fix, while a capped walk may still have the target further in.
+		if counter[1]:
+			stopped = " (stopped: node/time budget)"
+		elif depth_capped[0]:
+			stopped = " (stopped: depth %d)" % _TREE_WALK_DEPTH
+		else:
+			stopped = " (whole tree)"
+		self._dbg("lookup %r: %d nodes, depth %d, %d exact, %d partial%s" % (
+			title, counter[0], deepest[0], len(exact), len(partial), stopped))
 		return exact or partial
 
 	def _activateByTitle(self, title):
