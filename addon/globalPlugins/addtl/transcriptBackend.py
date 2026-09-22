@@ -27,7 +27,13 @@ from logHandler import log
 _MESSAGES_TTL = 2.0
 _THREADS_TTL = 30.0
 _TREE_WALK_DEPTH = 12
-_TREE_MATCH_LIMIT = 40
+# The thread list lives inside an Electron renderer, whose tree easily runs to
+# thousands of objects, and lists of that size are usually virtualized — so a
+# small budget silently finds only whatever happens to render early. Walk
+# generously, but under a wall-clock ceiling so a huge tree cannot hang NVDA.
+_TREE_MAX_NODES = 6000
+_TREE_WALK_BUDGET_S = 2.5
+_TREE_PARTIAL_LIMIT = 5
 
 
 class TranscriptBackend(object):
@@ -266,7 +272,8 @@ class TranscriptBackend(object):
 			self._invalidateMessages()
 			ui.message("[%d/%d] %s" % (self._threadIdx + 1, len(self._threads), label))
 		else:
-			ui.message("Could not switch to %s in %s" % (label, self.appLabel))
+			ui.message("Could not switch to %s in %s. Bring it into view in the %s list and try again." % (
+				label, self.appLabel, self.threadNoun))
 
 	def nextSession(self):
 		self._refreshThreads()
@@ -312,12 +319,27 @@ class TranscriptBackend(object):
 
 		wx.CallAfter(_show)
 
+	@staticmethod
+	def _isHeading(obj):
+		"""True when an object is a heading rather than a list row.
+
+		An open conversation exposes its own title as a heading. Activating
+		that would report success while changing nothing, so headings are
+		never matched.
+		"""
+		try:
+			text = str(getattr(obj, "roleDisplayString", "") or "").lower()
+		except Exception:
+			return False
+		return "heading" in text
+
 	def _collectTreeObjects(self, title):
 		"""Return accessible objects in the foreground window whose name is `title`.
 
-		Exact matches win; otherwise the first substring match is used. The
-		walk is capped in both depth and breadth because an Electron
-		renderer's tree can be very large.
+		Exact matches win; otherwise the first substring matches are used.
+		The walk is bounded by depth, node count and elapsed time, and the
+		result is logged so a failed switch can be told apart from a lookup
+		that never reached that part of the tree.
 		"""
 		needle = (title or "").strip().lower()
 		if not needle:
@@ -330,33 +352,44 @@ class TranscriptBackend(object):
 			return []
 		exact = []
 		partial = []
-		visited = [0]
+		budget = [time.monotonic() + _TREE_WALK_BUDGET_S]
+		counter = [0, False]
+
+		def expired():
+			if counter[0] >= _TREE_MAX_NODES or time.monotonic() > budget[0]:
+				counter[1] = True
+				return True
+			return False
 
 		def walk(obj, depth):
-			if depth > _TREE_WALK_DEPTH or visited[0] > _TREE_MATCH_LIMIT:
+			if counter[1] or depth > _TREE_WALK_DEPTH:
 				return
 			try:
 				children = list(obj.children)
 			except Exception:
 				return
 			for child in children:
-				if visited[0] > _TREE_MATCH_LIMIT:
+				counter[0] += 1
+				if expired():
 					return
-				visited[0] += 1
 				try:
 					name = (child.name or "").strip().lower()
 				except Exception:
 					name = ""
-				if name == needle:
-					exact.append(child)
-				elif name and needle in name and len(partial) < 5:
-					partial.append(child)
+				if name and not self._isHeading(child):
+					if name == needle:
+						exact.append(child)
+					elif needle in name and len(partial) < _TREE_PARTIAL_LIMIT:
+						partial.append(child)
 				walk(child, depth + 1)
 
 		try:
 			walk(root, 0)
-		except Exception:
-			pass
+		except Exception as e:
+			self._dbg("lookup %r: walk error %s" % (title, e))
+		self._dbg("lookup %r: %d nodes, %d exact, %d partial%s" % (
+			title, counter[0], len(exact), len(partial),
+			" (capped)" if counter[1] else ""))
 		return exact or partial
 
 	def _activateByTitle(self, title):
