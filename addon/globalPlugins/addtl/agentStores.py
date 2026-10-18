@@ -105,7 +105,11 @@ def local_threads(provider, home=None):
     else:
         roots = [home / '.claude' / 'projects']
         if provider == 'claude':
-            roots.extend((home / 'AppData/Roaming/Claude/local-agent-mode-sessions').glob(
+            # Roaming profiles can be redirected away from the home
+            # directory; APPDATA is the authoritative location.
+            appdata = os.environ.get('APPDATA')
+            roaming = Path(appdata) if appdata else home / 'AppData' / 'Roaming'
+            roots.extend((roaming / 'Claude/local-agent-mode-sessions').glob(
                 '*/*/local_*/.claude/projects'))
         for root in roots:
             for path in root.glob('*/*.jsonl'):
