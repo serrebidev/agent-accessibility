@@ -302,7 +302,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(gesture="kb:NVDA+alt+shift+n",
             description="Next session (focused agent or selected transcript buffer)")
     def script_nextSession(self, gesture):
-        target = self._target()
+        # No routed app and no explicit source means the default
+        # ChatGPT Codex buffer, as in the message navigation scripts.
+        target = self._target() or "chatgpt"
         if target == "hermes":
             self._hermes.nextSession()
         elif target == "opencode":
@@ -321,7 +323,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(gesture="kb:NVDA+alt+shift+p",
             description="Previous session (focused agent or selected transcript buffer)")
     def script_previousSession(self, gesture):
-        target = self._target()
+        target = self._target() or "chatgpt"
         if target == "hermes":
             self._hermes.prevSession()
         elif target == "opencode":
