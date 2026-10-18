@@ -21,7 +21,7 @@ import time
 import re
 import api
 
-_TERMINAL_TRANSCRIPT_SOURCES = {'codex': 'codexcli'}
+_TERMINAL_TRANSCRIPT_SOURCES = {'codex': 'codexcli', 'muse code': 'muse', 'muse': 'muse'}
 _DESKTOP_TRANSCRIPT_SOURCES = {}
 
 _CACHE_TTL = 0.25  # seconds

@@ -121,10 +121,39 @@ def local_messages(provider, thread):
     return jsonl_messages(provider, thread['path']) if os.path.isfile(thread['path']) else []
 
 
+def muse_messages(path):
+    messages = []
+    for record in records(path):
+        payload = record.get('payload') or {}
+        if not isinstance(payload, dict):
+            continue
+        event = payload.get('event') or {}
+        if not isinstance(event, dict):
+            continue
+        kind = event.get('kind')
+        role, text = '', ''
+        if payload.get('kind') == 'run' and kind == 'started':
+            role, text = 'user', event.get('prompt')
+        elif payload.get('kind') == 'run' and kind == 'assistant_message_committed':
+            role, text = 'assistant', event.get('text')
+        elif kind == 'inbox_item_queued':
+            source = event.get('source')
+            if source == 'user_steer' or isinstance(source, dict) and source.get('source') == 'user_steer':
+                inner = event.get('payload') or {}
+                role, text = 'user', inner.get('prompt') or event.get('body')
+        if isinstance(text, str) and text.strip():
+            messages.append(message(role, text))
+    return messages
 
 
-
-
+def muse_threads():
+    root = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'muse'
+    with closing(connect(root / 'session-index.db')) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute('SELECT session_id, title, workspace_root, session_log_path FROM sessions '
+                          'WHERE prompt_count > 0 ORDER BY updated_at_us DESC LIMIT 500')
+        return [{'id': r['session_id'], 'title': r['title'] or r['session_id'],
+                 'detail': r['workspace_root'] or '', 'path': r['session_log_path']} for r in rows]
 
 
 
@@ -204,6 +233,8 @@ def codex_changes(home, cursors):
 def snapshot(provider, selected="", listing=False):
     if provider in ('codex',):
         threads = local_threads(provider)
+    elif provider == 'muse':
+        threads = muse_threads()
     else:
         raise ValueError('Unknown transcript source')
     thread = select_thread(threads, selected)
@@ -211,6 +242,8 @@ def snapshot(provider, selected="", listing=False):
     if thread and not listing:
         if provider in ('codex',):
             messages = local_messages(provider, thread)
+        elif provider == 'muse':
+            messages = muse_messages(thread['path'])
     return {'threads': threads, 'messages': messages, 'id': thread['id'] if thread else ''}
 
 
@@ -221,8 +254,18 @@ def main():
         return
     selected = sys.argv[2] if len(sys.argv) > 2 else ''
     listing = len(sys.argv) > 3 and sys.argv[3] == 'list'
-    json.dump(snapshot(provider, selected, listing), sys.stdout)
-
+    if provider == 'muse' and os.name == 'nt':
+        # Run beside the live WAL database; UNC reads cannot safely open its WAL.
+        result = subprocess.run(['wsl.exe', '-e', 'python3', '-', provider, selected,
+                                 'list' if listing else 'messages'],
+                                input=Path(__file__).read_text(encoding='utf-8'),
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=50,
+                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if result.returncode:
+            raise RuntimeError('Could not read Muse Code in the default WSL distribution. Check WSL and python3.')
+        print(result.stdout)
+    else:
+        json.dump(snapshot(provider, selected, listing), sys.stdout)
 
 
 if __name__ == '__main__':

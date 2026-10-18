@@ -26,6 +26,10 @@ After installation, choose each source with the keyboard, read first/last messag
 
 Codex CLI reads current SQLite history and older JSONL rollouts. Migrated ChatGPT Codex tasks also support asynchronous message navigation, Auto-Read, and completion notices. The monitor baselines existing history and tracks pending streamed items until completion, including updates that retain the same ordinal.
 
+### Muse Code in WSL
+
+Muse Code reads its SQLite index and session event logs inside the default WSL distribution, using Python 3 there so the live WAL database remains readable. User prompts, user steering, and committed assistant messages are read; tool output and runtime bookkeeping are excluded.
+
 ## Download
 
 Grab the latest `.nvda-addon` from the [**Releases**](../../releases) page. The current build is **v2.10.0**.

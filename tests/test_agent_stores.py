@@ -56,6 +56,18 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(updates['items'][0]['phase'], 'final_answer')
         self.assertEqual(self.store.codex_changes(self.home, updates['cursors'])['items'], [])
 
+    def test_muse_reads_run_events_without_tool_or_reminder_text(self):
+        path = self.home / 'session.jsonl'
+        events = [
+            {'kind': 'started', 'prompt': 'Question'},
+            {'kind': 'assistant_message_committed', 'text': 'Answer'},
+            {'kind': 'tool_result_batch_committed', 'text': 'Hidden'},
+            {'kind': 'inbox_item_queued', 'source': 'user_steer', 'payload': {'prompt': 'More'}},
+        ]
+        path.write_text('\n'.join(json.dumps({'payload': {'kind': 'run', 'event': e}})
+                                  for e in events), encoding='utf-8')
+        self.assertEqual([m['text'] for m in self.store.muse_messages(path)],
+                         ['Question', 'Answer', 'More'])
 
     def test_codex_streaming_completion_is_read_when_ordinal_does_not_change(self):
         root = self.home / '.codex'
