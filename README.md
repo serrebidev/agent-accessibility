@@ -12,9 +12,23 @@ An [NVDA](https://www.nvaccess.org/) screen-reader add-on that improves accessib
 
 The add-on routes shared commands to the focused agent app. Codex transcript reading and active-task cycling remain available from other applications through NVDA's local buffer. It merges the previous `hermesAccessibility`, `opencodeAccessibility`, and `codexAccessibility` add-ons.
 
+## Agent transcript buffers
+
+Press **NVDA+Alt+Shift+S** from any app to choose a source and conversation. Selection changes only NVDA's reading buffer. It never sends a prompt, resumes a session, or switches the tool's active conversation.
+
+Use **NVDA+Alt+Down/Up**, **Home/End**, and **R** for messages; **NVDA+Alt+T** for available thinking; **NVDA+Alt+S** for the transcript picker; and **NVDA+Alt+Shift+N/P** to cycle conversations. The first read announces the newest transcript, then keeps that selection. Focused supported apps take precedence. **NVDA+Alt+Left/Right** remain Codex desktop task commands.
+
+System Python 3 with SQLite is required. Store reads run in background workers, errors are announced, and missing selections never silently change to another conversation. Recognized terminal titles beginning with an enabled agent name route automatically; use the source picker for other titles. New buffers provide manual reading. OpenCode and ChatGPT Codex retain Auto-Read.
+
+After installation, choose each source with the keyboard, read first/last messages, cycle transcripts, and cancel the picker with Escape. Confirm focus returns and the tool's active session stays unchanged. Live NVDA speech and Braille validation is still required.
+
+### Codex CLI
+
+Codex CLI reads current SQLite history and older JSONL rollouts. Migrated ChatGPT Codex tasks also support asynchronous message navigation, Auto-Read, and completion notices. The monitor baselines existing history and tracks pending streamed items until completion, including updates that retain the same ordinal.
+
 ## Download
 
-Grab the latest `.nvda-addon` from the [**Releases**](../../releases) page. The current build is **v2.9.0**.
+Grab the latest `.nvda-addon` from the [**Releases**](../../releases) page. The current build is **v2.10.0**.
 
 ## Install
 
@@ -22,7 +36,7 @@ Two equivalent ways to install the add-on on NVDA 2024.1 or later:
 
 **Option A — open the file directly**
 
-Double-click `agentDesktopAccessibility-2.9.0.nvda-addon` in your file manager (or open it from your browser's downloads). NVDA will detect the add-on and offer to install it.
+Double-click `agentDesktopAccessibility-2.10.0.nvda-addon` in your file manager (or open it from your browser's downloads). NVDA will detect the add-on and offer to install it.
 
 **Option B — from the Add-on Store**
 

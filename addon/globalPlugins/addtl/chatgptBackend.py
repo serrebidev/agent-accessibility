@@ -1718,6 +1718,22 @@ def _systemPythonCommand():
 	return _SYSTEM_PYTHON_COMMAND
 
 
+def _readAgentStore(provider, selected="", cursors=None):
+	"""Use system Python so migrated history also works without NVDA's sqlite3."""
+	command = _systemPythonCommand()
+	if not command:
+		raise RuntimeError("Python 3 with SQLite is required for Codex history")
+	helper = os.path.join(os.path.dirname(__file__), "agentStores.py")
+	process = subprocess.run(
+		command + [helper, provider, selected], input=json.dumps(cursors),
+		capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+		creationflags=_subprocessCreationFlags(), startupinfo=_subprocessStartupInfo())
+	payload = json.loads(process.stdout)
+	if process.returncode or payload.get("error"):
+		raise RuntimeError(payload.get("error") or "Codex history reader failed")
+	return payload
+
+
 def _loadCodexTaskRowsWithSystemPython(databasePaths):
 	"""Read task rows out of process when NVDA has no SQLite extension."""
 	command = _systemPythonCommand()
@@ -2757,6 +2773,12 @@ class ChatGPTBackend(object):
 		self._chatActivityLast = ()
 		self._chatRequestStartedAt = 0.0
 		self._autoReadFirstPollLogged = False
+		self._databaseCursors = None
+		self._databaseItems = []
+		self._databaseReadBusy = False
+		self._databaseReadAt = 0.0
+		self._databaseTranscript = None
+		self._databaseTranscriptBusy = False
 		self._terminated = False
 		self._scheduleAutoRead()
 
@@ -2815,9 +2837,85 @@ class ChatGPTBackend(object):
 
 	def _loadActiveTranscript(self):
 		path = self._resolveTranscriptPath()
-		if path is None and (self._activeTaskId or self._pendingProjectPath):
+		if path is None and self._pendingProjectPath:
 			return None, []
+		if path is None and glob.glob(os.path.join(CODEX_HOME, "thread_history_*.sqlite")):
+			cached = self._databaseTranscript
+			if cached and cached[0] == (self._activeTaskId or ""):
+				payload = cached[1]
+				messages = [dict(m, role="user" if m["role"] == "You" else "assistant")
+					for m in payload["messages"]]
+				return "codex-db:" + payload["id"], messages
 		return _loadTranscriptPath(path)
+
+	def _queueDatabaseTranscript(self, action):
+		"""Continue a manual reading gesture after its history arrives off-thread."""
+		if self._pendingProjectPath or self._resolveTranscriptPath() is not None:
+			return False
+		if not glob.glob(os.path.join(CODEX_HOME, "thread_history_*.sqlite")):
+			return False
+		selected = self._activeTaskId or ""
+		cached = self._databaseTranscript
+		if cached and cached[0] == selected and time.monotonic() - cached[2] < 2:
+			return False
+		if self._databaseTranscriptBusy:
+			ui.message("Codex transcript is loading")
+			return True
+		self._databaseTranscriptBusy = True
+		ui.message("Loading Codex transcript")
+
+		def finish(payload, error):
+			self._databaseTranscriptBusy = False
+			if self._terminated or selected != (self._activeTaskId or ""):
+				return
+			if error:
+				self._databaseTranscript = None
+				self._clearTranscriptBuffer()
+				ui.message("Codex transcript could not be loaded. %s" % error)
+				return
+			self._databaseTranscript = (selected, payload, time.monotonic())
+			action()
+
+		def read():
+			payload, error = None, None
+			try:
+				payload = _readAgentStore("codex", selected)
+			except Exception as exc:
+				log.exception("Could not read migrated Codex transcript")
+				error = str(exc)
+			wx.CallAfter(finish, payload, error)
+
+		threading.Thread(target=read, daemon=True).start()
+		return True
+
+	def _pollDatabaseHistory(self):
+		if self._terminated or self._databaseReadBusy or time.monotonic() - self._databaseReadAt < 2:
+			return
+		if not glob.glob(os.path.join(CODEX_HOME, "thread_history_*.sqlite")):
+			return
+		self._databaseReadBusy = True
+		self._databaseReadAt = time.monotonic()
+		cursors = self._databaseCursors
+
+		def read():
+			payload = None
+			try:
+				payload = _readAgentStore("codex-monitor", cursors=cursors)
+			except Exception:
+				log.exception("Could not poll migrated Codex history")
+			wx.CallAfter(self._finishDatabaseHistory, payload)
+
+		threading.Thread(target=read, daemon=True).start()
+
+	def _finishDatabaseHistory(self, payload):
+		self._databaseReadBusy = False
+		if self._terminated or payload is None:
+			return
+		self._databaseCursors = payload["cursors"]
+		for item in payload["items"]:
+			task = item.pop("task")
+			task["project"] = _projectDisplayName(task.get("detail") or "") or "Standalone"
+			self._databaseItems.append((task, item))
 
 	def _scheduleAutoRead(self):
 		"""Start one owned periodic timer for auto-read and completion checks."""
@@ -3044,6 +3142,7 @@ class ChatGPTBackend(object):
 		"""Read new Codex activity/messages and announce completed tasks."""
 		if self._terminated:
 			return
+		wx.CallAfter(self._pollDatabaseHistory)
 		if not self._autoReadFirstPollLogged:
 			self._autoReadFirstPollLogged = True
 			log.info("Codex auto-read monitor received its first timer callback")
@@ -3053,7 +3152,8 @@ class ChatGPTBackend(object):
 				"%d Codex tasks finished" % completedTasks
 				if completedTasks > 1 else "Codex task finished"
 			)
-			activeTaskItems = self._readActiveTaskItems(self._resolveTranscriptPath())
+			activeTaskItems = self._readActiveTaskItems(self._resolveTranscriptPath()) + self._databaseItems
+			self._databaseItems = []
 			readFinals = sum(
 				1 for _task, item in activeTaskItems
 				if item["role"] == "assistant" and item.get("phase") == "final_answer"
@@ -3572,6 +3672,8 @@ class ChatGPTBackend(object):
 		self._moveTranscript(-1)
 
 	def script_currentCodexMessage(self, gesture):
+		if self._queueDatabaseTranscript(lambda: self.script_currentCodexMessage(gesture)):
+			return
 		"""Read the current Codex transcript message."""
 		if not self._refreshTranscript():
 			ui.message("No Codex transcript messages found")
@@ -3595,6 +3697,8 @@ class ChatGPTBackend(object):
 		self.reportUsageLimits()
 
 	def _moveTranscript(self, offset):
+		if self._queueDatabaseTranscript(lambda: self._moveTranscript(offset)):
+			return
 		if not self._refreshTranscript():
 			ui.message("No Codex transcript messages found")
 			return
@@ -3605,6 +3709,8 @@ class ChatGPTBackend(object):
 		ui.message(_summarize(self._messages[self._index]))
 
 	def _speakTranscriptIndex(self, index):
+		if self._queueDatabaseTranscript(lambda: self._speakTranscriptIndex(index)):
+			return
 		if not self._refreshTranscript():
 			ui.message("No Codex transcript messages found")
 			return

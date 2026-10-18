@@ -18,7 +18,11 @@
 # tree on every keystroke.
 
 import time
+import re
 import api
+
+_TERMINAL_TRANSCRIPT_SOURCES = {'codex': 'codexcli'}
+_DESKTOP_TRANSCRIPT_SOURCES = {}
 
 _CACHE_TTL = 0.25  # seconds
 
@@ -117,6 +121,9 @@ def is_freebuff():
 
 def route():
     """Return the backend name for the foreground agent desktop app."""
+    transcript = _transcript_route()
+    if transcript:
+        return transcript
     if is_hermes():
         return 'hermes'
     if is_opencode():
@@ -128,6 +135,25 @@ def route():
     if is_chatgpt():
         return 'chatgpt'
     return None
+
+
+def _transcript_route():
+    """Recognize installed app identities and explicit agent terminal titles."""
+    try:
+        fg = api.getForegroundObject()
+        am = fg.appModule
+        app = (am.appName or '').lower().removesuffix('.exe')
+        if app in _DESKTOP_TRANSCRIPT_SOURCES:
+            return _DESKTOP_TRANSCRIPT_SOURCES[app]
+        if app not in ('windowsterminal', 'wt', 'cmd', 'powershell', 'pwsh', 'mintty', 'conhost'):
+            return None
+        title = (fg.name or '').lower().strip()
+        names = '|'.join(re.escape(name) for name in sorted(_TERMINAL_TRANSCRIPT_SOURCES, key=len, reverse=True))
+        match = re.match(r'^[^\w]*(%s)(?=$|[\s:|—-])' % names, title)
+        if match:
+            return _TERMINAL_TRANSCRIPT_SOURCES[match.group(1)]
+    except (AttributeError, RuntimeError):
+        return None
 
 
 def route_message_command():
