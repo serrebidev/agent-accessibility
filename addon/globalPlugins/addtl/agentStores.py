@@ -110,12 +110,19 @@ def local_threads(provider, home=None):
                 if path.name.endswith(('.checkpoints.jsonl', '.prompts.jsonl')) or not path.stat().st_size:
                     continue
                 title = path.stem
+                has_message = False
                 for record in records(path):
+                    if record.get('isMeta') or record.get('isSidechain') or record.get('type') != 'message':
+                        continue
                     part = record.get('message') or {}
-                    if isinstance(part, dict) and part.get('role') == 'user' and not record.get('isMeta') \
-                            and not record.get('isSidechain'):
+                    if not isinstance(part, dict) or part.get('role') not in ('user', 'assistant'):
+                        continue
+                    has_message = True
+                    if part['role'] == 'user':
                         title = content_text(part.get('content'))[:160] or title
                         break
+                if not has_message:
+                    continue
                 threads.append({'id': str(path), 'title': title, 'detail': path.parent.name,
                                 'path': str(path), 'sort': path.stat().st_mtime})
     return sorted(threads, key=lambda t: t['sort'], reverse=True)
