@@ -114,5 +114,12 @@ class RouterTests(unittest.TestCase):
             self.assertEqual(self.router.route(), expected)
 
 
+    def test_unavailable_muse_cli_never_routes_to_muse_code(self):
+        self.router.api.getForegroundObject = lambda: _foreground(
+            'WindowsTerminal', r'C:\Windows\WindowsTerminal.exe', title='muse-cli')
+        expected = self.router._TERMINAL_TRANSCRIPT_SOURCES.get('muse-cli')
+        self.assertEqual(self.router.route(), expected)
+
+
 if __name__ == "__main__":
     unittest.main()
