@@ -6,6 +6,7 @@ import json
 from contextlib import closing
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -133,7 +134,14 @@ def local_messages(provider, thread):
 
 
 
-
+def cli_json(args):
+    binary = shutil.which('muse-cli') or str(Path.home() / '.local/bin/muse-cli.exe')
+    result = subprocess.run([binary] + args, capture_output=True, encoding='utf-8',
+                            errors='replace', timeout=45,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    if result.returncode:
+        raise RuntimeError('muse-cli could not read history. Check its sign-in.')
+    return json.loads(result.stdout)
 
 
 def select_thread(threads, selected):
@@ -204,6 +212,9 @@ def codex_changes(home, cursors):
 def snapshot(provider, selected="", listing=False):
     if provider in ('codex',):
         threads = local_threads(provider)
+    elif provider == 'museai':
+        threads = [{'id': c['session_id'], 'title': c.get('title') or 'Main chat', 'detail': 'muse.ai'}
+                   for c in cli_json(['threads']) if c.get('session_id') and not c.get('archived')]
     else:
         raise ValueError('Unknown transcript source')
     thread = select_thread(threads, selected)
@@ -211,6 +222,11 @@ def snapshot(provider, selected="", listing=False):
     if thread and not listing:
         if provider in ('codex',):
             messages = local_messages(provider, thread)
+        elif provider == 'museai':
+            # shortcut: latest 500 muse.ai events; paginate when CLI exposes an older-history cursor.
+            messages = [message(m['role'], m['text']) for m in
+                        cli_json(['history', '--thread', thread['id'], '--limit', '500'])
+                        if m.get('role') in ('user', 'assistant') and isinstance(m.get('text'), str) and m['text']]
     return {'threads': threads, 'messages': messages, 'id': thread['id'] if thread else ''}
 
 

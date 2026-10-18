@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -85,6 +86,20 @@ class StoreTests(unittest.TestCase):
 
     def test_selected_missing_thread_never_falls_back_to_another_chat(self):
         self.assertIsNone(self.store.select_thread([{'id': 'other'}], 'missing'))
+
+
+    def test_museai_reads_only_selected_chat_without_sending(self):
+        calls = []
+        def cli(args):
+            calls.append(args)
+            if args == ['threads']:
+                return [{'session_id': 'first', 'title': 'First'}, {'session_id': 'chosen', 'title': 'Chosen'}]
+            return [{'role': 'user', 'text': 'Question'}, {'role': 'assistant', 'text': 'Answer'}]
+        with mock.patch.object(self.store, 'cli_json', side_effect=cli):
+            data = self.store.snapshot('museai', 'chosen')
+        self.assertEqual(data['id'], 'chosen')
+        self.assertEqual([m['text'] for m in data['messages']], ['Question', 'Answer'])
+        self.assertEqual(calls, [['threads'], ['history', '--thread', 'chosen', '--limit', '500']])
 
 
 if __name__ == '__main__':

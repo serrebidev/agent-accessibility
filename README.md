@@ -26,6 +26,10 @@ After installation, choose each source with the keyboard, read first/last messag
 
 Codex CLI reads current SQLite history and older JSONL rollouts. Migrated ChatGPT Codex tasks also support asynchronous message navigation, Auto-Read, and completion notices. The monitor baselines existing history and tracks pending streamed items until completion, including updates that retain the same ordinal.
 
+### muse.ai through muse-cli
+
+muse.ai requires an installed, signed-in muse-cli. The transcript buffer reads the latest 500 history events for the selected chat. Listing and history commands only read data; selecting a transcript never sends a message or changes the active chat.
+
 ## Download
 
 Grab the latest `.nvda-addon` from the [**Releases**](../../releases) page. The current build is **v2.10.0**.

@@ -39,8 +39,8 @@ class DispatcherTranscriptTests(unittest.TestCase):
             spec.loader.exec_module(self.module)
         self.plugin = self.module.GlobalPlugin.__new__(self.module.GlobalPlugin)
         self.plugin._transcripts = {key: mock.Mock() for key in
-                                    ('codexcli',)}
-        self.plugin._transcriptSource = 'codexcli'
+                                    ('codexcli', 'museai')}
+        self.plugin._transcriptSource = 'museai'
         self.plugin._chatgpt = mock.Mock()
         self.gesture = mock.Mock()
 
@@ -60,7 +60,7 @@ class DispatcherTranscriptTests(unittest.TestCase):
 
     def test_selected_background_source_and_focused_desktop_precedence(self):
         self.plugin.script_nextMessage(self.gesture)
-        self.plugin._transcripts['codexcli'].nextMessage.assert_called_once_with()
+        self.plugin._transcripts['museai'].nextMessage.assert_called_once_with()
         self.module.route.return_value = 'chatgpt'
         self.plugin.script_nextMessage(self.gesture)
         self.plugin._chatgpt.nextMessage.assert_called_once_with()

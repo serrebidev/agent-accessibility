@@ -95,7 +95,7 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.router.route_message_command(), "hermes")
 
     def test_routes_terminal_agents_without_matching_browser_titles(self):
-        titles = {'Codex — task': 'codexcli'}
+        titles = {'Codex — task': 'codexcli', 'muse-cli': 'museai', 'musecli — main': 'museai'}
         for title, expected in titles.items():
             with self.subTest(title=title):
                 self.router.reset_cache()
