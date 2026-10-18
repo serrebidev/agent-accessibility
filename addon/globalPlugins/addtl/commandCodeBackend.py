@@ -116,7 +116,7 @@ class CommandCodeBackend(TranscriptBackend):
 				continue
 			for path in glob.glob(os.path.join(root, "*", "*.jsonl")):
 				name = os.path.basename(path)
-				if name.endswith(".checkpoints.jsonl"):
+				if name.endswith((".checkpoints.jsonl", ".prompts.jsonl")):
 					continue
 				try:
 					# The CLI leaves zero-byte transcripts behind for scratch

@@ -26,6 +26,10 @@ After installation, choose each source with the keyboard, read first/last messag
 
 Codex CLI reads current SQLite history and older JSONL rollouts. Migrated ChatGPT Codex tasks also support asynchronous message navigation, Auto-Read, and completion notices. The monitor baselines existing history and tracks pending streamed items until completion, including updates that retain the same ordinal.
 
+### Command Code CLI
+
+Command Code CLI reads Windows logs under ~/.commandcode/projects. Prompt and checkpoint sidecars are excluded from both CLI and desktop conversation lists. Text and available thinking are read; tool records are excluded.
+
 ## Download
 
 Grab the latest `.nvda-addon` from the [**Releases**](../../releases) page. The current build is **v2.10.0**.

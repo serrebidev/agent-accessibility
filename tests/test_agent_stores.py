@@ -23,6 +23,30 @@ class StoreTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)
 
+    def test_claude_and_commandcode_skip_tools_sidecars_and_partial_lines(self):
+        for provider, root in [('commandcode', '.commandcode')]:
+            folder = self.home / root / 'projects' / 'project'
+            folder.mkdir(parents=True)
+            records = [
+                {'type': 'user' if provider == 'claude' else 'message',
+                 'message': {'role': 'user', 'content': 'Question'}},
+                {'type': 'assistant' if provider == 'claude' else 'message',
+                 'message': {'role': 'assistant', 'content': [
+                     {'type': 'thinking', 'thinking': 'Reason'},
+                     {'type': 'text', 'text': 'Answer'},
+                     {'type': 'tool_use', 'name': 'hidden'}]}},
+                {'type': 'user', 'isSidechain': True,
+                 'message': {'role': 'user', 'content': 'Internal'}},
+            ]
+            (folder / 'session.jsonl').write_text(
+                '\n'.join(json.dumps(r) for r in records) + '\n{"partial":', encoding='utf-8')
+            (folder / 'session.prompts.jsonl').write_text('{}', encoding='utf-8')
+            (folder / 'session.checkpoints.jsonl').write_text('{}', encoding='utf-8')
+            threads = self.store.local_threads(provider, self.home)
+            self.assertEqual(len(threads), 1)
+            messages = self.store.local_messages(provider, threads[0])
+            self.assertEqual([m['text'] for m in messages], ['Question', 'Answer'])
+            self.assertEqual(messages[1]['thinking'], 'Reason')
 
     def test_codex_reads_migrated_history_and_excludes_subagents(self):
         root = self.home / '.codex'
