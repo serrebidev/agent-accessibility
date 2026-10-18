@@ -65,6 +65,11 @@ class StoreTests(unittest.TestCase):
                 ('main', 2, json.dumps({'type': 'agentMessage', 'text': 'Answer'})),
                 ('main', 1, json.dumps({'type': 'userMessage', 'content': [{'text': 'Question'}]}))])
         db.close()
+        sessions = root / 'sessions'
+        sessions.mkdir()
+        for sid in ('old', 'child'):
+            (sessions / (sid + '.jsonl')).write_text(json.dumps({
+                'type': 'session_meta', 'payload': {'id': sid, 'source': 'cli'}}), encoding='utf-8')
         threads = self.store.local_threads('codex', self.home)
         self.assertEqual([t['id'] for t in threads], ['main'])
         self.assertEqual([m['text'] for m in self.store.local_messages('codex', threads[0])],
