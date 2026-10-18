@@ -2777,6 +2777,8 @@ class ChatGPTBackend(object):
 		self._databaseItems = []
 		self._databaseReadBusy = False
 		self._databaseReadAt = 0.0
+		self._databaseHistorySignature = None
+		self._pendingHistorySignature = None
 		self._databaseTranscript = None
 		self._databaseTranscriptBusy = False
 		self._terminated = False
@@ -2873,7 +2875,15 @@ class ChatGPTBackend(object):
 				self._clearTranscriptBuffer()
 				ui.message("Codex transcript could not be loaded. %s" % error)
 				return
-			self._databaseTranscript = (selected, payload, time.monotonic())
+			cacheKey = selected
+			if not cacheKey and isinstance(payload, dict) and payload.get("id"):
+				# No task was selected, so the helper resolved the newest
+				# one. Pin it as the active selection; otherwise every
+				# gesture after the cache TTL re-resolves and can land on
+				# a different task.
+				cacheKey = payload["id"]
+				self._activeTaskId = cacheKey
+			self._databaseTranscript = (cacheKey, payload, time.monotonic())
 			action()
 
 		def read():
@@ -2891,8 +2901,24 @@ class ChatGPTBackend(object):
 	def _pollDatabaseHistory(self):
 		if self._terminated or self._databaseReadBusy or time.monotonic() - self._databaseReadAt < 2:
 			return
-		if not glob.glob(os.path.join(CODEX_HOME, "thread_history_*.sqlite")):
+		paths = glob.glob(os.path.join(CODEX_HOME, "thread_history_*.sqlite"))
+		if not paths:
 			return
+		# Every committed history change writes to the database or its
+		# WAL, so an unchanged signature means there is nothing new to
+		# read; don't launch the helper process for an idle poll.
+		signature = []
+		for path in paths:
+			for candidate in (path, path + "-wal"):
+				try:
+					stat = os.stat(candidate)
+				except OSError:
+					continue
+				signature.append((candidate, stat.st_mtime_ns, stat.st_size))
+		signature = tuple(sorted(signature))
+		if signature == self._databaseHistorySignature and self._databaseCursors is not None:
+			return
+		self._pendingHistorySignature = signature
 		self._databaseReadBusy = True
 		self._databaseReadAt = time.monotonic()
 		cursors = self._databaseCursors
@@ -2911,6 +2937,7 @@ class ChatGPTBackend(object):
 		self._databaseReadBusy = False
 		if self._terminated or payload is None:
 			return
+		self._databaseHistorySignature = self._pendingHistorySignature
 		self._databaseCursors = payload["cursors"]
 		for item in payload["items"]:
 			task = item.pop("task")
