@@ -93,7 +93,22 @@ def local_threads(provider, home=None):
             threads.append({'id': sid, 'title': sid, 'detail': meta.get('cwd', ''),
                             'path': str(path), 'home': str(home), 'sort': path.stat().st_mtime})
     else:
-        raise ValueError("Unknown local transcript source")
+        roots = [home / '.claude' / 'projects']
+        if provider == 'claude':
+            roots.extend((home / 'AppData/Roaming/Claude/local-agent-mode-sessions').glob(
+                '*/*/local_*/.claude/projects'))
+        for root in roots:
+            for path in root.glob('*/*.jsonl'):
+                if path.name.endswith(('.checkpoints.jsonl', '.prompts.jsonl')) or not path.stat().st_size:
+                    continue
+                title = path.stem
+                for record in records(path):
+                    part = record.get('message') or {}
+                    if isinstance(part, dict) and part.get('role') == 'user' and not record.get('isMeta'):
+                        title = content_text(part.get('content'))[:160] or title
+                        break
+                threads.append({'id': str(path), 'title': title, 'detail': path.parent.name,
+                                'path': str(path), 'sort': path.stat().st_mtime})
     return sorted(threads, key=lambda t: t['sort'], reverse=True)
 
 
@@ -202,14 +217,14 @@ def codex_changes(home, cursors):
 
 
 def snapshot(provider, selected="", listing=False):
-    if provider in ('codex',):
+    if provider in ('codex', 'claude'):
         threads = local_threads(provider)
     else:
         raise ValueError('Unknown transcript source')
     thread = select_thread(threads, selected)
     messages = []
     if thread and not listing:
-        if provider in ('codex',):
+        if provider in ('codex', 'claude'):
             messages = local_messages(provider, thread)
     return {'threads': threads, 'messages': messages, 'id': thread['id'] if thread else ''}
 

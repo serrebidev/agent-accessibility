@@ -26,6 +26,10 @@ After installation, choose each source with the keyboard, read first/last messag
 
 Codex CLI reads current SQLite history and older JSONL rollouts. Migrated ChatGPT Codex tasks also support asynchronous message navigation, Auto-Read, and completion notices. The monitor baselines existing history and tracks pending streamed items until completion, including updates that retain the same ordinal.
 
+### Claude Code
+
+Claude Code reads Windows logs under ~/.claude/projects. Claude desktop processes route to Code and Cowork logs; ordinary claude.ai chats are not stored in these local transcripts. Text and available thinking are read; tool results and internal sidechains are excluded.
+
 ## Download
 
 Grab the latest `.nvda-addon` from the [**Releases**](../../releases) page. The current build is **v2.10.0**.
