@@ -72,6 +72,7 @@ def local_threads(provider, home=None):
     threads = []
     if provider == 'codex':
         root = home / '.codex'
+        known = set()
         databases = sorted(root.glob('state_*.sqlite'), key=lambda p: p.stat().st_mtime, reverse=True)
         if databases:
             with closing(connect(databases[0])) as db:
@@ -83,17 +84,17 @@ def local_threads(provider, home=None):
                 recency = next((name for name in ('recency_at_ms', 'updated_at_ms', 'recency_at',
                                                   'updated_at', 'created_at_ms', 'created_at')
                                 if name in columns), None)
-                query = 'SELECT * FROM threads WHERE archived = 0'
+                query = 'SELECT * FROM threads'
                 if recency:
                     query += ' ORDER BY %s DESC' % recency
                 for row in db.execute(query):
                     row = dict(row)
-                    if str(row.get('source', '')).startswith('{') or row.get('thread_source') == 'subagent':
+                    known.add(row['id'])
+                    if row.get('archived') or str(row.get('source', '')).startswith('{') or row.get('thread_source') == 'subagent':
                         continue
                     threads.append({'id': row['id'], 'title': row.get('name') or row['title'] or row['id'],
                                     'detail': row.get('cwd') or '', 'path': row.get('rollout_path') or '',
                                     'home': str(home), 'sort': row.get(recency) or 0})
-        known = {t['id'] for t in threads}
         for path in root.glob('sessions/**/*.jsonl'):
             header = next(records(path), {})
             meta = header.get('payload') or {}
