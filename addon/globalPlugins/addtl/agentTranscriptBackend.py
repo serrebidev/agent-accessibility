@@ -18,6 +18,7 @@ from .transcriptBackend import TranscriptBackend
 
 SOURCES = (
     ('codexcli', 'Codex CLI', 'codex'),
+    ('agy', 'Antigravity (agy)', 'agy'),
 )
 
 

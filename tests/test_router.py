@@ -95,7 +95,7 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.router.route_message_command(), "hermes")
 
     def test_routes_terminal_agents_without_matching_browser_titles(self):
-        titles = {'Codex — task': 'codexcli'}
+        titles = {'Codex — task': 'codexcli', 'agy': 'agy'}
         for title, expected in titles.items():
             with self.subTest(title=title):
                 self.router.reset_cache()
@@ -107,6 +107,11 @@ class RouterTests(unittest.TestCase):
                     'msedge', r'C:\Program Files\msedge.exe', title=title)
                 self.assertIsNone(self.router.route())
 
+    def test_routes_antigravity_and_claude_desktops_by_identity(self):
+        for app, expected in [('antigravity', 'agy')]:
+            self.router.reset_cache()
+            self.router.api.getForegroundObject = lambda: _foreground(app, app + '.exe')
+            self.assertEqual(self.router.route(), expected)
 
 
 if __name__ == "__main__":

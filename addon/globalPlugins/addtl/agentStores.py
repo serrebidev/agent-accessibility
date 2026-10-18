@@ -127,10 +127,55 @@ def local_messages(provider, thread):
 
 
 
+def proto_fields(data):
+    """Decode wire fields; reject truncated or unsupported data without guessing text."""
+    offset = 0
+    def varint():
+        nonlocal offset
+        value = 0
+        for shift in range(0, 70, 7):
+            if offset >= len(data):
+                raise ValueError('Truncated Antigravity field')
+            byte = data[offset]
+            offset += 1
+            value |= (byte & 127) << shift
+            if byte < 128:
+                return value
+        raise ValueError('Invalid Antigravity varint')
+    while offset < len(data):
+        tag = varint()
+        wire = tag & 7
+        if not tag >> 3:
+            raise ValueError('Invalid Antigravity field')
+        if wire == 0:
+            value = varint()
+        elif wire in (1, 2, 5):
+            length = varint() if wire == 2 else (8 if wire == 1 else 4)
+            end = offset + length
+            if end > len(data):
+                raise ValueError('Truncated Antigravity payload')
+            value, offset = data[offset:end], end
+        else:
+            raise ValueError('Unsupported Antigravity wire type')
+        yield tag >> 3, value
 
 
-
-
+def agy_messages(path):
+    messages = []
+    with closing(connect(path)) as db:
+        for kind, payload in db.execute('SELECT step_type, step_payload FROM steps '
+                                        'WHERE step_type IN (5,15) ORDER BY idx'):
+            # Installed Antigravity schema: userInput=10, modelResponse=20.
+            for field, value in proto_fields(payload or b''):
+                if field != (10 if kind == 5 else 20) or not isinstance(value, bytes):
+                    continue
+                parts = dict(proto_fields(value))
+                text = parts.get(26 if kind == 5 else 1, b'')
+                thought = parts.get(3, b'') if kind == 15 else b''
+                if isinstance(text, bytes) and isinstance(thought, bytes) and (text or thought):
+                    messages.append(message('user' if kind == 5 else 'assistant',
+                                            text.decode('utf-8'), thought.decode('utf-8')))
+    return messages
 
 
 
@@ -204,6 +249,10 @@ def codex_changes(home, cursors):
 def snapshot(provider, selected="", listing=False):
     if provider in ('codex',):
         threads = local_threads(provider)
+    elif provider == 'agy':
+        paths = sorted((Path.home() / '.gemini/antigravity/conversations').glob('*.db'),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        threads = [{'id': p.stem, 'title': p.stem, 'detail': 'Antigravity', 'path': str(p)} for p in paths]
     else:
         raise ValueError('Unknown transcript source')
     thread = select_thread(threads, selected)
@@ -211,6 +260,8 @@ def snapshot(provider, selected="", listing=False):
     if thread and not listing:
         if provider in ('codex',):
             messages = local_messages(provider, thread)
+        elif provider == 'agy':
+            messages = agy_messages(thread['path'])
     return {'threads': threads, 'messages': messages, 'id': thread['id'] if thread else ''}
 
 

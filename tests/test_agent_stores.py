@@ -82,6 +82,28 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([m['text'] for m in finished['items']], ['Complete'])
         self.assertEqual(self.store.codex_changes(self.home, finished['cursors'])['items'], [])
 
+    def test_antigravity_decodes_only_known_message_fields(self):
+        def varint(n):
+            data = bytearray()
+            while n > 127:
+                data.append((n & 127) | 128)
+                n >>= 7
+            return bytes(data) + bytes([n])
+        def field(n, value):
+            return varint(n * 8 + 2) + varint(len(value)) + value
+        path = self.home / 'conversation.db'
+        with sqlite3.connect(path) as db:
+            db.execute('CREATE TABLE steps (idx INTEGER, step_type INTEGER, step_payload BLOB)')
+            db.executemany('INSERT INTO steps VALUES (?,?,?)', [
+                (0, 5, field(10, field(26, b'Question'))),
+                (1, 15, field(20, field(1, b'Answer') + field(3, b'Reason'))),
+                (2, 8, field(14, field(4, b'Tool output')))])
+        db.close()
+        messages = self.store.agy_messages(path)
+        self.assertEqual([m['text'] for m in messages], ['Question', 'Answer'])
+        self.assertEqual(messages[1]['thinking'], 'Reason')
+        with self.assertRaises(ValueError):
+            list(self.store.proto_fields(b'\x0a\xff'))
 
     def test_selected_missing_thread_never_falls_back_to_another_chat(self):
         self.assertIsNone(self.store.select_thread([{'id': 'other'}], 'missing'))

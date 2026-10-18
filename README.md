@@ -26,6 +26,10 @@ After installation, choose each source with the keyboard, read first/last messag
 
 Codex CLI reads current SQLite history and older JSONL rollouts. Migrated ChatGPT Codex tasks also support asynchronous message navigation, Auto-Read, and completion notices. The monitor baselines existing history and tracks pending streamed items until completion, including updates that retain the same ordinal.
 
+### Antigravity (agy)
+
+Antigravity reads the current SQLite conversations under ~/.gemini/antigravity/conversations. Known user-input, assistant-text, and thinking fields are decoded; tool output is excluded. Older protobuf-only stores are unsupported. Picker entries currently use conversation IDs.
+
 ## Download
 
 Grab the latest `.nvda-addon` from the [**Releases**](../../releases) page. The current build is **v2.10.0**.

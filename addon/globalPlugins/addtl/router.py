@@ -21,8 +21,8 @@ import time
 import re
 import api
 
-_TERMINAL_TRANSCRIPT_SOURCES = {'codex': 'codexcli'}
-_DESKTOP_TRANSCRIPT_SOURCES = {}
+_TERMINAL_TRANSCRIPT_SOURCES = {'codex': 'codexcli', 'antigravity': 'agy', 'agy': 'agy'}
+_DESKTOP_TRANSCRIPT_SOURCES = {'antigravity': 'agy', 'agy': 'agy'}
 
 _CACHE_TTL = 0.25  # seconds
 
