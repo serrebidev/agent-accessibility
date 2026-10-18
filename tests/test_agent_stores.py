@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 HELPER = Path(__file__).resolve().parents[1] / 'addon/globalPlugins/addtl/agentStores.py'
@@ -22,6 +23,7 @@ class StoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)
+        self.enterContext(mock.patch.dict(self.store.os.environ, {'APPDATA': str(self.home / 'Roaming')}))
 
     def test_claude_and_commandcode_skip_tools_sidecars_and_partial_lines(self):
         for provider, root in [('claude', '.claude')]:
@@ -84,6 +86,18 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([item['text'] for item in updates['items']], ['Finished'])
         self.assertEqual(updates['items'][0]['phase'], 'final_answer')
         self.assertEqual(self.store.codex_changes(self.home, updates['cursors'])['items'], [])
+
+    def test_claude_picker_excludes_sidechain_only_logs_and_titles(self):
+        folder = self.home / '.claude/projects/project'
+        folder.mkdir(parents=True)
+        internal = {'type': 'user', 'isSidechain': True,
+                    'message': {'role': 'user', 'content': 'Internal prompt'}}
+        real = {'type': 'user', 'message': {'role': 'user', 'content': 'Visible prompt'}}
+        (folder / 'agent-child.jsonl').write_text(json.dumps(internal), encoding='utf-8')
+        (folder / 'session.jsonl').write_text(
+            json.dumps(internal) + '\n' + json.dumps(real), encoding='utf-8')
+        threads = self.store.local_threads('claude', self.home)
+        self.assertEqual([thread['title'] for thread in threads], ['Visible prompt'])
 
 
     def test_codex_streaming_completion_is_read_when_ordinal_does_not_change(self):
