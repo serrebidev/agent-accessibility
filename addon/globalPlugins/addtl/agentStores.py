@@ -111,7 +111,8 @@ def local_threads(provider, home=None):
                 title = path.stem
                 for record in records(path):
                     part = record.get('message') or {}
-                    if isinstance(part, dict) and part.get('role') == 'user' and not record.get('isMeta'):
+                    if isinstance(part, dict) and part.get('role') == 'user' and not record.get('isMeta') \
+                            and not record.get('isSidechain'):
                         title = content_text(part.get('content'))[:160] or title
                         break
                 threads.append({'id': str(path), 'title': title, 'detail': path.parent.name,
