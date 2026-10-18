@@ -86,6 +86,19 @@ class StoreTests(unittest.TestCase):
     def test_selected_missing_thread_never_falls_back_to_another_chat(self):
         self.assertIsNone(self.store.select_thread([{'id': 'other'}], 'missing'))
 
+    def test_codex_threads_support_updated_at_ms_schema(self):
+        root = self.home / '.codex'
+        root.mkdir()
+        with sqlite3.connect(root / 'state_9.sqlite') as db:
+            db.execute('CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at_ms INTEGER, '
+                       'rollout_path TEXT, source TEXT, archived INTEGER)')
+            db.executemany('INSERT INTO threads VALUES (?,?,?,?,?,?,?)', [
+                ('older', 'Older', '/project', 1000, '', 'cli', 0),
+                ('newer', 'Newer', '/project', 2000, '', 'cli', 0)])
+        db.close()
+        threads = self.store.local_threads('codex', self.home)
+        self.assertEqual([t['id'] for t in threads], ['newer', 'older'])
+
 
 if __name__ == '__main__':
     unittest.main()
