@@ -149,7 +149,7 @@ def _transcript_route():
             return None
         title = (fg.name or '').lower().strip()
         names = '|'.join(re.escape(name) for name in sorted(_TERMINAL_TRANSCRIPT_SOURCES, key=len, reverse=True))
-        match = re.match(r'^[^\w]*(%s)(?=$|[\s:|—-])' % names, title)
+        match = re.match(r'^[^\w]*(%s)(?!-[a-z])(?=$|[\s:|—-])' % names, title)
         if match:
             return _TERMINAL_TRANSCRIPT_SOURCES[match.group(1)]
     except (AttributeError, RuntimeError):
