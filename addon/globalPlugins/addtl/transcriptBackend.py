@@ -120,7 +120,13 @@ class TranscriptBackend(object):
 			log.warning("%s: could not load messages: %s", self.appLabel, e)
 			self._dbg("loadMessages error:", e)
 			messages, conversation_id = [], ""
-		if messages or force_refresh or not self._messages:
+		if messages or force_refresh or not self._messages or (
+			conversation_id and conversation_id != self._messagesId
+		):
+			# A changed conversation ID means the cache now describes a
+			# different conversation; replace it even when the new
+			# conversation has no messages yet, or navigation would keep
+			# announcing the previous conversation's messages.
 			self._messages = messages
 			self._messagesTime = now
 		if conversation_id and conversation_id != self._messagesId:
